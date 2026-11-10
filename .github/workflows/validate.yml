@@ -24,7 +24,7 @@ jobs:
   hacs:
     runs-on: ubuntu-latest
     steps:
-      - uses: home-assistant/actions/hacs@main
+      - uses: hacs/action@main
         with:
           category: integration
           ignore: brands topics description
