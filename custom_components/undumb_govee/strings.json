@@ -1,0 +1,89 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect your Govee account",
+        "description": "Get an API key in the Govee Home app: Profile → Settings → Apply for API Key. Govee emails it to you.",
+        "data": {
+          "api_key": "API key",
+          "scan_interval": "Refresh interval"
+        },
+        "data_description": {
+          "scan_interval": "How often to ask Govee for the lamp's state. Govee allows about 10,000 requests a day per key, so keep this at 60 seconds or more if you have several lamps."
+        }
+      },
+      "devices": {
+        "title": "Choose your lamps",
+        "description": "Found {count} Govee lights. Lamps with more than one light are preselected.",
+        "data": {
+          "devices": "Lamps"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Govee API key expired",
+        "description": "Govee rejected the stored API key. Paste a new one.",
+        "data": {
+          "api_key": "API key"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Govee rejected this API key. Check for missing characters, or request a new key in the Govee app.",
+      "cannot_connect": "Couldn't reach Govee's servers. Check your internet connection and try again.",
+      "no_devices": "This Govee account has no lights."
+    },
+    "abort": {
+      "already_configured": "This Govee account is already set up.",
+      "reauth_successful": "API key updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Undumb Govee",
+        "menu_options": {
+          "settings": "Lamps and refresh interval",
+          "pick_lamp": "Map a lamp's lights to segments"
+        }
+      },
+      "settings": {
+        "title": "Lamps and refresh interval",
+        "data": {
+          "devices": "Lamps",
+          "scan_interval": "Refresh interval"
+        }
+      },
+      "pick_lamp": {
+        "title": "Choose a lamp",
+        "data": {
+          "lamp": "Lamp"
+        }
+      },
+      "zones": {
+        "title": "Lights in {name}",
+        "description": "This lamp reports {count} segments, numbered 0 to {last}. Give each light a name and the segments it covers, for example `0-9` or `10-14`. Leave a row empty to skip it. To find the right split, change a light's colour from Developer tools and watch which part of the lamp changes.",
+        "data": {
+          "name_1": "Light 1 name",
+          "segments_1": "Light 1 segments",
+          "name_2": "Light 2 name",
+          "segments_2": "Light 2 segments",
+          "name_3": "Light 3 name",
+          "segments_3": "Light 3 segments",
+          "name_4": "Light 4 name",
+          "segments_4": "Light 4 segments",
+          "reset": "Reset to the default split"
+        }
+      }
+    },
+    "error": {
+      "incomplete": "Give this light both a name and segments.",
+      "bad_segments": "Use segment numbers within the lamp's range, like 0-9 or 3, 5, 7.",
+      "overlap": "These segments are already used by another light.",
+      "no_zones": "Add at least one light."
+    },
+    "abort": {
+      "cannot_connect": "Couldn't reach Govee's servers. Try again in a moment.",
+      "no_segment_lamps": "None of your selected lamps has segments to map. Lamps whose second light is a separate switch are set up automatically."
+    }
+  }
+}
