@@ -86,97 +86,103 @@ label.f{display:grid;gap:6px;font-size:13px;color:var(--muted);margin-bottom:14p
 .lampsvg{width:120px;height:auto;flex:none}
 @media (prefers-reduced-motion:no-preference){.glow{animation:breathe 4s ease-in-out infinite}}
 @keyframes breathe{50%{opacity:.55}}
+.radio{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--line);border-radius:10px;margin-bottom:10px}
+.radio.sel{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.radio input{accent-color:var(--accent);margin-top:3px}
+.radio small{display:block;color:var(--muted)}
+.lan{display:inline-flex;gap:6px;align-items:center;font:600 11px var(--mono);padding:3px 8px;border-radius:99px;background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)}
+.ceil{width:150px;height:auto;flex:none}
 footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:20px}
 </style>
 
 <div class="wrap">
 <header>
-  <div class="tag">Home Assistant integration · design mockups</div>
-  <h1>One lamp, two lights, two entities</h1>
-  <p>Govee lamps like the Floor Lamp 2 have a main light and a second light (a ring, uplight or ambient strip). Today Home Assistant and Apple Home show one switch for the whole thing. These screens show how <b>Undumb Govee</b> splits it up.</p>
+  <div class="tag">Home Assistant integration · mockups for the H60A4</div>
+  <h1>Square Ceiling Light: main panel and edge ring, as two lights</h1>
+  <p>The Govee H60A4 has a white and colour main panel (RGBWW) and a colour-chasing edge ring (RGBIC). Home Assistant and Apple Home currently show one switch for both. With <b>Undumb Govee</b> each one gets its own entity, and LAN control keeps the main light local.</p>
   <div class="lamp-hero">
-    <svg class="lampsvg" viewBox="0 0 120 220" aria-label="Lamp with a warm main light and a purple ring light">
-      <circle class="glow" cx="60" cy="40" r="34" fill="var(--warm)" opacity=".25"/>
-      <rect x="40" y="16" width="40" height="52" rx="8" fill="var(--warm)"/>
-      <rect x="57" y="68" width="6" height="120" fill="var(--muted)"/>
-      <circle class="glow" cx="60" cy="196" r="26" fill="var(--ring)" opacity=".25"/>
-      <ellipse cx="60" cy="198" rx="30" ry="7" fill="none" stroke="var(--ring)" stroke-width="5"/>
+    <svg class="ceil" viewBox="0 0 150 150" aria-label="Square ceiling light with a warm main panel and a purple-to-blue edge ring">
+      <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--ring)"/><stop offset="1" stop-color="var(--accent)"/></linearGradient></defs>
+      <rect class="glow" x="6" y="6" width="138" height="138" rx="22" fill="url(#rg)" opacity=".22"/>
+      <rect x="14" y="14" width="122" height="122" rx="18" fill="none" stroke="url(#rg)" stroke-width="8"/>
+      <rect x="30" y="30" width="90" height="90" rx="10" fill="var(--warm)"/>
     </svg>
     <div style="display:grid;gap:10px;min-width:0">
-      <div style="display:flex;gap:10px;align-items:center"><span class="dot" style="background:var(--warm)"></span><span><b>Main light</b> · <code style="font:13px var(--mono)">light.floor_lamp_main</code></span></div>
-      <div style="display:flex;gap:10px;align-items:center"><span class="dot" style="background:var(--ring)"></span><span><b>Ring light</b> · <code style="font:13px var(--mono)">light.floor_lamp_ring</code></span></div>
-      <div style="display:flex;gap:10px;align-items:center"><span class="dot" style="background:var(--accent)"></span><span><b>Whole lamp</b> · <code style="font:13px var(--mono)">light.floor_lamp</code></span></div>
+      <div style="display:flex;gap:10px;align-items:center"><span class="dot" style="background:var(--warm)"></span><span><b>Main light</b> · <code style="font:13px var(--mono)">light.ceiling_light</code></span></div>
+      <div style="display:flex;gap:10px;align-items:center"><span class="dot" style="background:var(--ring)"></span><span><b>Edge ring</b> · <code style="font:13px var(--mono)">light.ceiling_light_ring</code></span></div>
+      <div><span class="lan">● LAN</span> <span style="color:var(--muted);font-size:13px">main light and status run locally</span></div>
     </div>
   </div>
 </header>
 
 <section>
-  <div class="note"><div class="tag">Step 1 · Setup</div><h2>Paste your Govee API key</h2>
-    <p>Request the key in the Govee app under <b>Profile → Settings → Apply for API Key</b>. It arrives by email within minutes.</p>
-    <p>The key is checked right away, so a typo shows up here instead of as dead entities later.</p></div>
+  <div class="note"><div class="tag">Step 1 · Setup</div><h2>API key, plus local control</h2>
+    <p>The cloud key is still needed because Govee only allows ring segments to be controlled through its cloud API.</p>
+    <p>Power, brightness, colour and colour temperature of the main light go over your network whenever the lamp answers there. That's faster, works when Govee's servers are down and doesn't count against the daily request limit.</p></div>
   <div class="screen">
     <h3>Undumb Govee</h3><p class="sub">Connect your Govee account</p>
     <label class="f">API key<span class="input">c1f3••••••••••••••••••••8a2e</span></label>
     <label class="f">Refresh interval (seconds)<span class="input">60</span></label>
+    <label class="dev" style="margin-bottom:6px"><input type="checkbox" checked id="lan1"><span><b>Use LAN control when available</b><small>Turn on "LAN Steuerung" in the Govee app first</small></span></label>
+    <label class="f" style="margin-top:12px">Lamp IP addresses (optional)<span class="input">192.168.1.48</span></label>
     <div class="btnrow"><button class="btn" type="button">Submit</button></div>
   </div>
 </section>
 
 <section>
-  <div class="note"><div class="tag">Step 2 · Devices</div><h2>Pick the lamps to add</h2>
-    <p>Every light-type device on the account is listed. The badge shows how many separate lights were detected from what the device reports to Govee.</p></div>
+  <div class="note"><div class="tag">Step 2 · Devices</div><h2>Your lamps, with what was detected</h2>
+    <p>Known models get a layout preset. The H60A4 is set up as main light plus ring, and the green badge shows that it answered on the LAN.</p></div>
   <div class="screen">
     <h3>Found 3 lights</h3><p class="sub">Choose which ones Home Assistant should control</p>
-    <label class="dev"><input type="checkbox" checked id="d1"><span><b>Floor Lamp</b><small>H607C · 2 lights via segments</small></span><span class="pill">2 lights</span></label>
-    <label class="dev"><input type="checkbox" checked id="d2"><span><b>Desk Lamp</b><small>H6022 · main + nightlight toggle</small></span><span class="pill">2 lights</span></label>
+    <label class="dev"><input type="checkbox" checked id="d1"><span><b>Ceiling Light</b><small>H60A4 · main + ring · LAN</small></span><span class="pill">2 lights</span></label>
+    <label class="dev"><input type="checkbox" checked id="d2"><span><b>Floor Lamp</b><small>H607C · main + ring</small></span><span class="pill">2 lights</span></label>
     <label class="dev"><input type="checkbox" id="d3"><span><b>TV Backlight</b><small>H6199 · 15 segments</small></span><span class="pill single">1 light</span></label>
     <div class="btnrow"><button class="btn" type="button">Submit</button></div>
   </div>
 </section>
 
 <section>
-  <div class="note"><div class="tag">Step 3 · Optional</div><h2>Adjust which segments belong to which light</h2>
-    <p>Known models come with a preset. For anything else, the integration splits segments into two lights and you can rename or move them under <b>Configure</b>.</p>
-    <p>Segments are typed as ranges, like <code>0-9</code> or <code>10-14</code>.</p></div>
+  <div class="note"><div class="tag">Step 3 · Optional</div><h2>Pick a layout and check the ring</h2>
+    <p><b>Main light + ring</b> treats the lamp's overall colour as the main panel and its segments as the ring. Switching the ring off leaves the main light on.</p>
+    <p>If the preset doesn't match your lamp, the <code>undumb_govee.set_segments</code> action paints any segments a test colour so you can see which part of the lamp they are.</p></div>
   <div class="screen">
-    <h3>Floor Lamp · lights</h3><p class="sub">15 segments reported by the lamp</p>
+    <h3>Ceiling Light · layout</h3><p class="sub">The lamp reports 14 segments</p>
+    <label class="radio sel"><input type="radio" name="lay" checked id="l1"><span><b>Main light + ring</b><small>Main panel uses the lamp's own controls. Segments form the ring.</small></span></label>
+    <label class="radio"><input type="radio" name="lay" id="l2"><span><b>Split segments into lights</b><small>For lamps where every light is a run of segments, like floor lamps.</small></span></label>
     <div class="segs">
-      <div class="seg a">0</div><div class="seg a">1</div><div class="seg a">2</div><div class="seg a">3</div><div class="seg a">4</div><div class="seg a">5</div><div class="seg a">6</div><div class="seg a">7</div><div class="seg a">8</div><div class="seg a">9</div>
-      <div class="seg b">10</div><div class="seg b">11</div><div class="seg b">12</div><div class="seg b">13</div><div class="seg b">14</div>
+      <div class="seg b">0</div><div class="seg b">1</div><div class="seg b">2</div><div class="seg b">3</div><div class="seg b">4</div><div class="seg b">5</div><div class="seg b">6</div><div class="seg b">7</div><div class="seg b">8</div><div class="seg b">9</div><div class="seg b">10</div><div class="seg b">11</div><div class="seg b">12</div><div class="seg b">13</div>
     </div>
-    <div class="zonerow"><span class="dot" style="background:var(--warm)"></span><span class="input">Main</span><span class="input">0-9</span></div>
-    <div class="zonerow"><span class="dot" style="background:var(--ring)"></span><span class="input">Ring</span><span class="input">10-14</span></div>
+    <div class="zonerow"><span class="dot" style="background:var(--ring)"></span><span class="input">Ring</span><span class="input">0-13</span></div>
     <div class="btnrow" style="margin-top:14px"><button class="btn ghost" type="button">Reset to preset</button><button class="btn" type="button">Save</button></div>
   </div>
 </section>
 
 <section>
-  <div class="note"><div class="tag">Result · Device page</div><h2>Three light entities per lamp</h2>
-    <p>Each light can be switched, dimmed and coloured on its own. The whole-lamp entity also carries colour temperature and Govee scenes as effects.</p>
-    <p>A light made of segments has no power switch of its own, so "off" means brightness 0. Turning it on restores the last level.</p></div>
+  <div class="note"><div class="tag">Result · Device page</div><h2>Two light entities</h2>
+    <p>The main light keeps everything the panel can do: dimming, 2700–6500 K white and colour, plus Govee scenes as effects.</p>
+    <p>The ring is dimmed and coloured through its segments. Because segments have no power switch, "off" means brightness 0.</p></div>
   <div class="screen">
-    <h3>Floor Lamp</h3><p class="sub">Govee H607C · via Undumb Govee</p>
-    <div class="ent"><span class="ico" style="background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)">●</span><span><b>Floor Lamp</b><small>light.floor_lamp · scenes, colour temp</small></span><span class="tog on"></span></div>
-    <div class="ent"><span class="ico" style="background:color-mix(in srgb,var(--warm) 22%,transparent);color:var(--warm)">●</span><span><b>Floor Lamp Main</b><small>light.floor_lamp_main · 80% · warm white</small></span><span class="tog on"></span></div>
-    <div class="ent"><span class="ico" style="background:color-mix(in srgb,var(--ring) 22%,transparent);color:var(--ring)">●</span><span><b>Floor Lamp Ring</b><small>light.floor_lamp_ring · off</small></span><span class="tog"></span></div>
+    <h3>Ceiling Light</h3><p class="sub">Govee H60A4 · via Undumb Govee · <span class="lan">● LAN</span></p>
+    <div class="ent"><span class="ico" style="background:color-mix(in srgb,var(--warm) 22%,transparent);color:var(--warm)">●</span><span><b>Ceiling Light</b><small>light.ceiling_light · 70% · 3000 K</small></span><span class="tog on"></span></div>
+    <div class="ent"><span class="ico" style="background:color-mix(in srgb,var(--ring) 22%,transparent);color:var(--ring)">●</span><span><b>Ceiling Light Ring</b><small>light.ceiling_light_ring · 40% · purple</small></span><span class="tog on"></span></div>
   </div>
 </section>
 
 <section>
-  <div class="note"><div class="tag">Result · Dashboard</div><h2>A card that shows both lights</h2>
-    <p>The bundled <code>undumb-govee-card</code> loads automatically. Add it with one line of YAML and it finds the lamp's lights for you.</p></div>
+  <div class="note"><div class="tag">Result · Dashboard</div><h2>Main and ring side by side</h2>
+    <p>The bundled card recognises the layout. The main tile adds warm, neutral and cool white buttons, and the ring tile has colour swatches.</p></div>
   <div class="screen">
     <div class="card">
-      <div class="card-head"><b>Floor Lamp</b><span class="tog on"></span></div>
+      <div class="card-head"><b>Ceiling Light</b><span class="tog on"></span></div>
       <div class="zones">
         <div class="zone">
-          <div class="zone-top"><span class="dot" style="background:var(--warm)"></span><span><b>Main</b><small>On · 80%</small></span><span class="tog on"></span></div>
-          <div class="bar"><span style="width:80%;background:color-mix(in srgb,var(--warm) 70%,transparent)"></span><em>80%</em></div>
-          <div class="sw"><i class="sel" style="background:#ffc77a"></i><i style="background:#ffffff"></i><i style="background:#ff5a5a"></i><i style="background:#5a8cff"></i><i style="background:#c255e6"></i></div>
+          <div class="zone-top"><span class="dot" style="background:var(--warm)"></span><span><b>Main</b><small>On · 70% · 3000 K</small></span><span class="tog on"></span></div>
+          <div class="bar"><span style="width:70%;background:color-mix(in srgb,var(--warm) 70%,transparent)"></span><em>70%</em></div>
+          <div class="sw"><i class="sel" style="background:#ffc58a"></i><i style="background:#fff1e0"></i><i style="background:#dfe9ff"></i><i style="background:#ff5a5a"></i><i style="background:#5a8cff"></i></div>
         </div>
         <div class="zone">
-          <div class="zone-top"><span class="dot" style="background:var(--ring)"></span><span><b>Ring</b><small>Off</small></span><span class="tog"></span></div>
-          <div class="bar"><span style="width:0"></span><em>0%</em></div>
+          <div class="zone-top"><span class="dot" style="background:var(--ring)"></span><span><b>Ring</b><small>On · 40%</small></span><span class="tog on"></span></div>
+          <div class="bar"><span style="width:40%;background:color-mix(in srgb,var(--ring) 70%,transparent)"></span><em>40%</em></div>
           <div class="sw"><i style="background:#ffc77a"></i><i style="background:#ffffff"></i><i style="background:#ff5a5a"></i><i style="background:#5a8cff"></i><i class="sel" style="background:#c255e6"></i></div>
         </div>
       </div>
@@ -186,16 +192,15 @@ footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);paddin
 
 <section>
   <div class="note"><div class="tag">Result · Apple Home</div><h2>Two tiles in Apple Home</h2>
-    <p>Add the new entities to HA's built-in <b>HomeKit Bridge</b> and each light gets its own tile. Siri can then handle "turn on the ring light".</p></div>
+    <p>Add both entities to HA's <b>HomeKit Bridge</b>. If the lamp is also paired to Apple Home through Matter, remove that pairing. Otherwise you'll have a third, combined tile.</p></div>
   <div class="screen">
     <div class="home">
-      <div class="tile on"><span class="bulb" style="background:var(--warm)"></span><span>Floor Lamp Main<small>80%</small></span></div>
+      <div class="tile on"><span class="bulb" style="background:var(--warm)"></span><span>Ceiling Light<small>70%</small></span></div>
+      <div class="tile on"><span class="bulb" style="background:var(--ring)"></span><span>Ceiling Light Ring<small>40%</small></span></div>
       <div class="tile off"><span class="bulb" style="background:rgb(255 255 255/.3)"></span><span>Floor Lamp Ring<small>Off</small></span></div>
-      <div class="tile on"><span class="bulb" style="background:#ffd9a0"></span><span>Desk Lamp<small>60%</small></span></div>
-      <div class="tile on"><span class="bulb" style="background:#9fb6ff"></span><span>Desk Lamp Night<small>On</small></span></div>
     </div>
   </div>
 </section>
 
-<footer>These screens show the target design. Device names and models are examples.</footer>
+<footer>These screens show the target design. Segment counts and IP addresses are examples.</footer>
 </div>

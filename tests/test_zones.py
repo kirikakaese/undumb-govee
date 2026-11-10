@@ -8,6 +8,7 @@ from custom_components.undumb_govee.zones import (
     KIND_SEGMENT,
     KIND_TOGGLE,
     build_zones,
+    default_layout,
     default_segment_zones,
     format_segments,
     int_to_rgb,
@@ -20,7 +21,7 @@ from custom_components.undumb_govee.zones import (
     toggle_name,
 )
 
-from .conftest import DESK_LAMP, FLOOR_LAMP
+from .conftest import CEILING_LIGHT, DESK_LAMP, FLOOR_LAMP
 
 
 def test_parse_floor_lamp() -> None:
@@ -123,3 +124,20 @@ def test_state_map() -> None:
         {"instance": "weird"},
     ]
     assert state_map(caps) == {"powerSwitch": 1, "brightness": 40, "segmentedColorRgb": ""}
+
+
+def test_ceiling_light_preset_is_main_plus_ring() -> None:
+    prof = parse_profile(CEILING_LIGHT)
+    assert default_layout(prof) == "main_ring"
+    assert default_segment_zones(prof) == [{"name": "Ring", "segments": "0-13"}]
+    zones = build_zones(prof, None)
+    assert [(z.name, z.key) for z in zones] == [("Ring", "seg_ring")]
+
+
+def test_layout_override() -> None:
+    prof = parse_profile(CEILING_LIGHT)
+    assert default_segment_zones(prof, "split") == [
+        {"name": "Main", "segments": "0-6"},
+        {"name": "Second", "segments": "7-13"},
+    ]
+    assert default_segment_zones(parse_profile(FLOOR_LAMP), "main_ring") == [{"name": "Ring", "segments": "0-14"}]

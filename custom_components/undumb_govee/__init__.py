@@ -15,13 +15,17 @@ from .api import GoveeApiError, GoveeAuthError, GoveeClient
 from .const import (
     CARD_URL,
     CONF_DEVICES,
+    CONF_LAN_HOSTS,
+    CONF_LAYOUTS,
     CONF_SCAN_INTERVAL,
+    CONF_USE_LAN,
     CONF_ZONES,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
 from .coordinator import Lamp, UndumbCoordinator
-from .zones import build_zones, is_light, parse_profile
+from .lan import GoveeLan
+from .zones import build_zones, default_layout, is_light, parse_profile
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,6 +52,41 @@ async def _register_card(hass: HomeAssistant) -> None:
         _LOGGER.warning("Could not register the Undumb Govee card", exc_info=True)
 
 
+def parse_hosts(text: str | None) -> list[str]:
+    return [h.strip() for h in (text or "").replace(";", ",").split(",") if h.strip()]
+
+
+async def _acquire_lan(hass: HomeAssistant) -> GoveeLan | None:
+    """Start (or reuse) the shared LAN listener. None if the port is taken."""
+    store = hass.data.setdefault(DOMAIN, {})
+    if "lan" in store:
+        store["lan_users"] += 1
+        return store["lan"]
+    lan = GoveeLan()
+    try:
+        await lan.start()
+    except (OSError, RuntimeError) as err:
+        _LOGGER.warning(
+            "LAN control unavailable, using the cloud only. Port 4002 couldn't be opened (%s). "
+            "Another Govee LAN integration may be using it",
+            err,
+        )
+        return None
+    store["lan"] = lan
+    store["lan_users"] = 1
+    return lan
+
+
+def _release_lan(hass: HomeAssistant) -> None:
+    store = hass.data.get(DOMAIN, {})
+    if "lan" not in store:
+        return
+    store["lan_users"] -= 1
+    if store["lan_users"] <= 0:
+        store.pop("lan").stop()
+        store.pop("lan_users", None)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: UndumbConfigEntry) -> bool:
     """Set up Undumb Govee from a config entry."""
     client = GoveeClient(async_get_clientsession(hass), entry.data[CONF_API_KEY])
@@ -60,6 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: UndumbConfigEntry) -> bo
 
     selected = set(entry.options.get(CONF_DEVICES) or [])
     zone_config = entry.options.get(CONF_ZONES) or {}
+    layouts = entry.options.get(CONF_LAYOUTS) or {}
     lamps: dict[str, Lamp] = {}
     for dev in devices:
         if not is_light(dev):
@@ -67,7 +107,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: UndumbConfigEntry) -> bo
         prof = parse_profile(dev)
         if selected and prof.device_id not in selected:
             continue
-        lamp = Lamp(profile=prof, zones=build_zones(prof, zone_config.get(prof.device_id)))
+        layout = layouts.get(prof.device_id) or default_layout(prof)
+        lamp = Lamp(
+            profile=prof,
+            zones=build_zones(prof, zone_config.get(prof.device_id), layout),
+            layout=layout,
+        )
         if prof.has_scenes:
             try:
                 lamp.scenes = [
@@ -85,9 +130,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: UndumbConfigEntry) -> bo
             [z.name for z in lamp.zones],
         )
 
+    lan: GoveeLan | None = None
+    hosts = parse_hosts(entry.options.get(CONF_LAN_HOSTS))
+    if entry.options.get(CONF_USE_LAN, True) and lamps:
+        lan = await _acquire_lan(hass)
+        if lan is not None:
+            await lan.scan(hosts)
+            found = [lamp.profile.name for dev_id, lamp in lamps.items() if lan.find(dev_id)]
+            _LOGGER.debug("LAN control for: %s", found or "no lamps")
+
     interval = int(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-    coordinator = UndumbCoordinator(hass, entry, client, lamps, interval)
-    await coordinator.async_config_entry_first_refresh()
+    coordinator = UndumbCoordinator(hass, entry, client, lamps, interval, lan, hosts)
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        if lan is not None:
+            _release_lan(hass)
+        raise
     entry.runtime_data = coordinator
 
     await _register_card(hass)
@@ -102,5 +161,8 @@ async def _async_reload(hass: HomeAssistant, entry: UndumbConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: UndumbConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded and entry.runtime_data.lan is not None:
+        _release_lan(hass)
+    return unloaded
 

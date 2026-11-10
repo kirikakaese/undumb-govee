@@ -33,11 +33,31 @@ KIND_TOGGLE = "toggle"
 # Toggle instances that are features rather than lights.
 NON_LIGHT_TOGGLES = {"gradientToggle", "oscillationToggle", "dreamViewToggle", "sceneStageToggle"}
 
-# Known lamps. Names only: segment ranges are split evenly from what the lamp
-# reports, because segment counts vary between hardware revisions. Users can
-# change both in the options flow.
-SKU_PRESETS: dict[str, tuple[str, ...]] = {
-    "H607C": ("Main", "Ring"),  # Floor Lamp 2: main panel + LED ring
+# Layouts:
+#   split      - every light is a run of segments (e.g. floor lamps).
+#   main_ring  - the lamp's own power/colour/colour-temp drive the main light,
+#                and the segments form a separate ring (e.g. ceiling lights
+#                with an RGBWW panel and an RGBIC edge).
+LAYOUT_SPLIT = "split"
+LAYOUT_MAIN_RING = "main_ring"
+LAYOUTS = (LAYOUT_MAIN_RING, LAYOUT_SPLIT)
+
+
+@dataclass(frozen=True)
+class Preset:
+    layout: str
+    names: tuple[str, ...]
+    label: str
+
+
+# Known lamps. Segment ranges are worked out from what the lamp reports,
+# because segment counts vary between hardware revisions. Users can change
+# everything in the options flow.
+SKU_PRESETS: dict[str, Preset] = {
+    "H607C": Preset(LAYOUT_SPLIT, ("Main", "Ring"), "Floor Lamp 2"),
+    "H60A4": Preset(LAYOUT_MAIN_RING, ("Ring",), "Square Ceiling Light"),
+    "H60A0": Preset(LAYOUT_MAIN_RING, ("Ring",), "Ceiling Light Pro"),
+    "H60A1": Preset(LAYOUT_MAIN_RING, ("Ring",), "Ceiling Light"),
 }
 
 DEFAULT_SEGMENT_NAMES = ("Main", "Second", "Third", "Fourth")
@@ -198,11 +218,23 @@ def format_segments(segments: list[int]) -> str:
     return ", ".join(runs)
 
 
-def default_segment_zones(prof: DeviceProfile) -> list[dict[str, Any]]:
+def default_layout(prof: DeviceProfile) -> str:
+    preset = SKU_PRESETS.get(prof.sku.upper())
+    return preset.layout if preset else LAYOUT_SPLIT
+
+
+def default_segment_zones(prof: DeviceProfile, layout: str | None = None) -> list[dict[str, Any]]:
     """Suggested segment mapping for a device, in options-flow format."""
-    if not prof.has_segments or prof.segment_count < 2:
+    layout = layout or default_layout(prof)
+    preset = SKU_PRESETS.get(prof.sku.upper())
+    if not prof.has_segments:
         return []
-    names = SKU_PRESETS.get(prof.sku.upper(), DEFAULT_SEGMENT_NAMES[:2])
+    if layout == LAYOUT_MAIN_RING:
+        name = preset.names[0] if preset and preset.layout == LAYOUT_MAIN_RING else "Ring"
+        return [{"name": name, "segments": format_segments(list(range(prof.segment_count)))}]
+    if prof.segment_count < 2:
+        return []
+    names = preset.names if preset and preset.layout == LAYOUT_SPLIT else DEFAULT_SEGMENT_NAMES[:2]
     runs = split_evenly(prof.segment_count, len(names))
     return [{"name": n, "segments": format_segments(r)} for n, r in zip(names, runs, strict=False)]
 
@@ -230,10 +262,12 @@ def toggle_name(instance: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-def build_zones(prof: DeviceProfile, configured: list[dict[str, Any]] | None) -> list[Zone]:
+def build_zones(
+    prof: DeviceProfile, configured: list[dict[str, Any]] | None, layout: str | None = None
+) -> list[Zone]:
     """Create Zone objects from the user's mapping (or the default one)."""
     zones: list[Zone] = []
-    mapping = configured if configured else default_segment_zones(prof)
+    mapping = configured if configured else default_segment_zones(prof, layout)
     if prof.has_segments:
         used: set[str] = set()
         for entry in mapping:

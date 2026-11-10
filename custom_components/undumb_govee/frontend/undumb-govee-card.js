@@ -51,8 +51,11 @@ class UndumbGoveeCard extends HTMLElement {
     }
     const title = this._config.title || lamp.attributes.friendly_name;
     const lampOn = lamp.state === "on";
+    // Main light + ring lamps: the whole-lamp entity *is* the main light.
+    const mainRing = lamp.attributes.undumb_govee_layout === "main_ring";
+    const tileStates = mainRing ? [lamp, ...zones] : zones;
     const tiles = zones.length
-      ? zones.map((z) => this._zoneHtml(z, lamp)).join("")
+      ? tileStates.map((z) => this._zoneHtml(z, z === lamp)).join("")
       : `<div class="msg">No separate lights found for this lamp. Map them under Settings → Devices → Undumb Govee → Configure.</div>`;
     this.shadowRoot.innerHTML = `
       <style>
@@ -82,23 +85,33 @@ class UndumbGoveeCard extends HTMLElement {
       <ha-card>
         <div class="head">
           <div class="name">${esc(title)}</div>
-          <ha-switch data-toggle="${esc(lamp.entity_id)}" ${lampOn ? "checked" : ""}></ha-switch>
+          ${mainRing && zones.length ? "" : `<ha-switch data-toggle="${esc(lamp.entity_id)}" ${lampOn ? "checked" : ""}></ha-switch>`}
         </div>
         <div class="zones">${tiles}</div>
       </ha-card>`;
     this._bind();
   }
 
-  _zoneHtml(z, lamp) {
+  _zoneHtml(z, isMain = false) {
     const on = z.state === "on";
     const a = z.attributes;
     const pct = on && a.brightness != null ? Math.round((a.brightness / 255) * 100) : 0;
     const rgb = a.rgb_color || (on ? [255, 214, 150] : null);
     const color = rgb ? `rgb(${rgb.join(",")})` : "var(--disabled-text-color)";
-    const name = esc(a.zone_name || a.friendly_name);
-    const supportsColor = (a.supported_color_modes || []).some((m) => ["rgb", "hs", "xy", "rgbw", "rgbww"].includes(m));
-    const supportsBri = (a.supported_color_modes || []).some((m) => m !== "onoff");
-    const status = z.state === "unavailable" ? "Unavailable" : on ? (supportsBri ? `On \u00b7 ${pct}%` : "On") : "Off";
+    const name = esc(isMain ? "Main" : a.zone_name || a.friendly_name);
+    const modes = a.supported_color_modes || [];
+    const whites = modes.includes("color_temp")
+      ? [
+          ["Warm", "#ffc58a", Math.max(a.min_color_temp_kelvin || 2700, 2700)],
+          ["Neutral", "#fff1e0", 4000],
+          ["Cool", "#dfe9ff", Math.min(a.max_color_temp_kelvin || 6500, 6500)],
+        ]
+      : [];
+    const kelvin = on && a.color_mode === "color_temp" && a.color_temp_kelvin ? ` \u00b7 ${a.color_temp_kelvin} K` : "";
+    const supportsColor = modes.some((m) => ["rgb", "hs", "xy", "rgbw", "rgbww"].includes(m));
+    const supportsBri = modes.some((m) => m !== "onoff");
+    const status = z.state === "unavailable" ? "Unavailable" : on ? (supportsBri ? `On \u00b7 ${pct}%${kelvin}` : "On") : "Off";
+    const swatches = isMain && whites.length ? this._config.swatches.slice(3) : this._config.swatches;
     return `
       <div class="zone ${on ? "" : "off"}" style="--zone-color:${color}">
         <div class="top">
@@ -107,9 +120,10 @@ class UndumbGoveeCard extends HTMLElement {
           <ha-switch data-toggle="${esc(z.entity_id)}" ${on ? "checked" : ""}></ha-switch>
         </div>
         ${supportsBri ? `<input type="range" min="1" max="100" value="${pct || 1}" aria-label="${name} brightness" data-bri="${esc(z.entity_id)}">` : ""}
-        ${supportsColor ? `<div class="sw">
-          ${this._config.swatches.map((h) => `<button type="button" title="${h}" aria-label="Set ${name} to ${h}" style="background:${h}" data-rgb="${esc(z.entity_id)}" data-hex="${h}"></button>`).join("")}
-          <input type="color" aria-label="Pick a colour for ${name}" value="${rgb ? rgbToHex(rgb) : "#ffffff"}" data-pick="${esc(z.entity_id)}">
+        ${supportsColor || whites.length ? `<div class="sw">
+          ${whites.map(([label, hex, k]) => `<button type="button" title="${label} white" aria-label="Set ${name} to ${label.toLowerCase()} white" style="background:${hex}" data-kelvin="${esc(z.entity_id)}" data-k="${k}"></button>`).join("")}
+          ${(supportsColor ? swatches : []).map((h) => `<button type="button" title="${h}" aria-label="Set ${name} to ${h}" style="background:${h}" data-rgb="${esc(z.entity_id)}" data-hex="${h}"></button>`).join("")}
+          ${supportsColor ? `<input type="color" aria-label="Pick a colour for ${name}" value="${rgb ? rgbToHex(rgb) : "#ffffff"}" data-pick="${esc(z.entity_id)}">` : ""}
         </div>` : ""}
       </div>`;
   }
@@ -124,6 +138,9 @@ class UndumbGoveeCard extends HTMLElement {
     );
     root.querySelectorAll("[data-rgb]").forEach((el) =>
       el.addEventListener("click", () => this._call("turn_on", el.dataset.rgb, { rgb_color: hexToRgb(el.dataset.hex) }))
+    );
+    root.querySelectorAll("[data-kelvin]").forEach((el) =>
+      el.addEventListener("click", () => this._call("turn_on", el.dataset.kelvin, { color_temp_kelvin: Number(el.dataset.k) }))
     );
     root.querySelectorAll("[data-pick]").forEach((el) =>
       el.addEventListener("change", () => this._call("turn_on", el.dataset.pick, { rgb_color: hexToRgb(el.value) }))

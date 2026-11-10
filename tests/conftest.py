@@ -50,3 +50,24 @@ DESK_LAMP = {
 }
 
 PLUG = {"sku": "H5080", "device": "99", "deviceName": "Plug", "type": "devices.types.socket", "capabilities": []}
+
+CEILING_SEG = [{"fieldName": "segment", "dataType": "Array", "elementRange": {"min": 0, "max": 13}, "size": {"min": 1, "max": 14}}]
+
+# Govee H60A4 Square Ceiling Light: RGBWW main panel + RGBIC edge ring.
+CEILING_LIGHT = {
+    "sku": "H60A4",
+    "device": "0A:0B:0C:0D:0E:0F:10:11",
+    "deviceName": "Ceiling Light",
+    "type": "devices.types.light",
+    "capabilities": [
+        {"type": "devices.capabilities.online", "instance": "online"},
+        {"type": "devices.capabilities.on_off", "instance": "powerSwitch"},
+        {"type": "devices.capabilities.range", "instance": "brightness", "parameters": {"range": {"min": 1, "max": 100}}},
+        {"type": "devices.capabilities.color_setting", "instance": "colorRgb"},
+        {"type": "devices.capabilities.color_setting", "instance": "colorTemperatureK", "parameters": {"range": {"min": 2700, "max": 6500}}},
+        {"type": "devices.capabilities.segment_color_setting", "instance": "segmentedColorRgb",
+         "parameters": {"fields": CEILING_SEG + [{"fieldName": "rgb"}]}},
+        {"type": "devices.capabilities.segment_color_setting", "instance": "segmentedBrightness",
+         "parameters": {"fields": CEILING_SEG + [{"fieldName": "brightness", "range": {"min": 0, "max": 100}}]}},
+    ],
+}

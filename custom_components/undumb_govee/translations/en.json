@@ -6,10 +6,14 @@
         "description": "Get an API key in the Govee Home app: Profile → Settings → Apply for API Key. Govee emails it to you.",
         "data": {
           "api_key": "API key",
-          "scan_interval": "Refresh interval"
+          "scan_interval": "Refresh interval",
+          "use_lan": "Use LAN control when available",
+          "lan_hosts": "Lamp IP addresses (optional)"
         },
         "data_description": {
-          "scan_interval": "How often to ask Govee for the lamp's state. Govee allows about 10,000 requests a day per key, so keep this at 60 seconds or more if you have several lamps."
+          "scan_interval": "How often to ask Govee for the lamp's state. Govee allows about 10,000 requests a day per key, so keep this at 60 seconds or more if you have several lamps.",
+          "use_lan": "Faster and local, and doesn't count against the daily limit. Turn on \"LAN Control\" for the lamp in the Govee app first. Segment lights still use the cloud.",
+          "lan_hosts": "Only needed if lamps aren't found automatically, for example when Home Assistant runs in Docker without host networking. Separate addresses with commas."
         }
       },
       "devices": {
@@ -50,7 +54,9 @@
         "title": "Lamps and refresh interval",
         "data": {
           "devices": "Lamps",
-          "scan_interval": "Refresh interval"
+          "scan_interval": "Refresh interval",
+          "use_lan": "Use LAN control when available",
+          "lan_hosts": "Lamp IP addresses (optional)"
         }
       },
       "pick_lamp": {
@@ -61,7 +67,7 @@
       },
       "zones": {
         "title": "Lights in {name}",
-        "description": "This lamp reports {count} segments, numbered 0 to {last}. Give each light a name and the segments it covers, for example `0-9` or `10-14`. Leave a row empty to skip it. To find the right split, change a light's colour from Developer tools and watch which part of the lamp changes.",
+        "description": "This lamp reports {count} segments, numbered 0 to {last}.\n\n**Main light + ring**: the lamp's own controls drive the main light, and the lights below are made of segments (usually the ring). Good for ceiling lights.\n**Split segments into lights**: every light is a run of segments. Good for floor lamps.\n\nGive each light a name and its segments, for example `0-9`. Leave a row empty to skip it. To switch layout and get its default rows, choose the layout and tick *Reset*. To check which segments are where, use the `undumb_govee.set_segments` action in Developer tools.",
         "data": {
           "name_1": "Light 1 name",
           "segments_1": "Light 1 segments",
@@ -71,7 +77,8 @@
           "segments_3": "Light 3 segments",
           "name_4": "Light 4 name",
           "segments_4": "Light 4 segments",
-          "reset": "Reset to the default split"
+          "reset": "Reset rows to the default for this layout",
+          "layout": "Layout"
         }
       }
     },
@@ -84,6 +91,34 @@
     "abort": {
       "cannot_connect": "Couldn't reach Govee's servers. Try again in a moment.",
       "no_segment_lamps": "None of your selected lamps has segments to map. Lamps whose second light is a separate switch are set up automatically."
+    }
+  },
+  "selector": {
+    "layout": {
+      "options": {
+        "main_ring": "Main light + ring",
+        "split": "Split segments into lights"
+      }
+    }
+  },
+  "services": {
+    "set_segments": {
+      "name": "Set segments",
+      "description": "Paint individual segments of a Govee lamp. Use it to find out which segments belong to which light.",
+      "fields": {
+        "segments": {
+          "name": "Segments",
+          "description": "Segment numbers, like 0-3 or 5, 7."
+        },
+        "rgb_color": {
+          "name": "Colour",
+          "description": "Colour to paint. Defaults to red."
+        },
+        "brightness_pct": {
+          "name": "Brightness",
+          "description": "Segment brightness."
+        }
+      }
     }
   }
 }

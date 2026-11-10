@@ -12,8 +12,9 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.undumb_govee.const import CONF_DEVICES, CONF_SCAN_INTERVAL, CONF_ZONES, DOMAIN
+from custom_components.undumb_govee.lan import LanDevice, normalise_id, status_to_state, to_lan_command
 
-from .conftest import DESK_LAMP, FLOOR_LAMP, PLUG
+from .conftest import CEILING_LIGHT, DESK_LAMP, FLOOR_LAMP, PLUG
 
 
 class FakeClient:
@@ -29,15 +30,23 @@ class FakeClient:
                 {"instance": "colorRgb", "state": {"value": 0xFF8800}},
                 {"instance": "colorTemperatureK", "state": {"value": 0}},
             ],
+            CEILING_LIGHT["device"]: [
+                {"instance": "online", "state": {"value": True}},
+                {"instance": "powerSwitch", "state": {"value": 1}},
+                {"instance": "brightness", "state": {"value": 50}},
+                {"instance": "colorTemperatureK", "state": {"value": 4000}},
+            ],
             DESK_LAMP["device"]: [
                 {"instance": "powerSwitch", "state": {"value": 1}},
                 {"instance": "nightlightToggle", "state": {"value": 0}},
             ],
         }
-        self.get_devices = AsyncMock(return_value=[FLOOR_LAMP, DESK_LAMP, PLUG])
+        self.get_devices = AsyncMock(return_value=[FLOOR_LAMP, DESK_LAMP, CEILING_LIGHT, PLUG])
+        self.state_calls = 0
         self.get_scenes = AsyncMock(return_value=[{"name": "Sunrise", "value": {"id": 1, "paramId": 2}, "instance": "lightScene"}])
 
     async def get_state(self, sku: str, device: str) -> list[dict[str, Any]]:
+        self.state_calls += 1
         return self.states[device]
 
     async def control(self, sku: str, device: str, cap_type: str, instance: str, value: Any) -> None:
@@ -47,10 +56,49 @@ class FakeClient:
                 cap["state"]["value"] = value
 
 
+class FakeLan:
+    """Pretends lamps listed in `lamps` answer on the LAN."""
+
+    instance: FakeLan | None = None
+
+    def __init__(self) -> None:
+        self.lamps: dict[str, dict[str, Any]] = {}  # device id -> devStatus data
+        self.commands: list[tuple[str, str, dict[str, Any]]] = []
+        self.started = self.stopped = False
+        FakeLan.instance = self
+
+    async def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    async def scan(self, hosts=None, wait: float = 2.0):
+        return {}
+
+    def find(self, device_id: str) -> LanDevice | None:
+        for dev in self.lamps:
+            if normalise_id(dev) == normalise_id(device_id):
+                return LanDevice(dev, "192.0.2.10", "")
+        return None
+
+    async def status(self, ip: str, timeout: float = 2.0):
+        return status_to_state(next(iter(self.lamps.values()))) if self.lamps else None
+
+    def command(self, ip: str, instance: str, value: Any) -> bool:
+        cmd = to_lan_command(instance, value)
+        if cmd is None:
+            return False
+        self.commands.append((ip, *cmd))
+        return True
+
+
 @pytest.fixture
 def fake() -> FakeClient:
     client = FakeClient()
-    with patch("custom_components.undumb_govee.GoveeClient", return_value=client):
+    with patch("custom_components.undumb_govee.GoveeClient", return_value=client), patch(
+        "custom_components.undumb_govee.GoveeLan", FakeLan
+    ):
         yield client
 
 
@@ -71,6 +119,8 @@ async def test_entities_created(hass: HomeAssistant, fake: FakeClient) -> None:
     assert entry.state is ConfigEntryState.LOADED
     ids = sorted(hass.states.async_entity_ids("light"))
     assert ids == [
+        "light.ceiling_light",
+        "light.ceiling_light_ring",
         "light.desk_lamp",
         "light.desk_lamp_nightlight",
         "light.floor_lamp",
@@ -172,3 +222,81 @@ async def test_unload(hass: HomeAssistant, fake: FakeClient) -> None:
     entry = await _setup(hass)
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_ceiling_light_main_ring(hass: HomeAssistant, fake: FakeClient) -> None:
+    await _setup(hass)
+    dev = CEILING_LIGHT["device"]
+    main = hass.states.get("light.ceiling_light")
+    assert main.attributes["undumb_govee_layout"] == "main_ring"
+    assert main.attributes["color_temp_kelvin"] == 4000
+    ring = hass.states.get("light.ceiling_light_ring")
+    assert ring.attributes["segments"] == "0-13"
+
+    # Switching the ring off must leave the main panel on.
+    await hass.services.async_call("light", "turn_off", {"entity_id": "light.ceiling_light_ring"}, blocking=True)
+    assert fake.calls[-1] == (dev, "segmentedBrightness", {"segment": list(range(14)), "brightness": 0})
+    assert (dev, "powerSwitch", 0) not in fake.calls
+    assert hass.states.get("light.ceiling_light").state == "on"
+    assert hass.states.get("light.ceiling_light_ring").state == "off"
+
+
+async def test_set_segments_service(hass: HomeAssistant, fake: FakeClient) -> None:
+    await _setup(hass)
+    dev = CEILING_LIGHT["device"]
+    await hass.services.async_call(
+        DOMAIN, "set_segments", {"entity_id": "light.ceiling_light_ring", "segments": "0-2"}, blocking=True
+    )
+    assert fake.calls[-1] == (dev, "segmentedColorRgb", {"segment": [0, 1, 2], "rgb": 0xFF0000})
+
+    from homeassistant.exceptions import ServiceValidationError
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "set_segments", {"entity_id": "light.ceiling_light", "segments": "40"}, blocking=True
+        )
+
+
+async def test_lan_used_for_main_controls(hass: HomeAssistant, fake: FakeClient) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_API_KEY: "test-key"},
+        options={CONF_DEVICES: [CEILING_LIGHT["device"]], CONF_SCAN_INTERVAL: 60, CONF_ZONES: {}},
+    )
+    entry.add_to_hass(hass)
+
+    orig_init = FakeLan.__init__
+
+    def init_with_lamp(self) -> None:
+        orig_init(self)
+        self.lamps[CEILING_LIGHT["device"]] = {
+            "onOff": 1, "brightness": 30, "color": {"r": 0, "g": 0, "b": 0}, "colorTemInKelvin": 3000,
+        }
+
+    with patch.object(FakeLan, "__init__", init_with_lamp):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    lan = FakeLan.instance
+    assert lan.started
+
+    main = hass.states.get("light.ceiling_light")
+    assert main.attributes["connection"] == "lan"
+    assert main.attributes["color_temp_kelvin"] == 3000  # from LAN, not the cloud's 4000
+
+    fake.calls.clear()
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.ceiling_light", "brightness_pct": 80, "rgb_color": [255, 0, 0]},
+        blocking=True,
+    )
+    assert lan.commands == [
+        ("192.0.2.10", "brightness", {"value": 80}),
+        ("192.0.2.10", "colorwc", {"color": {"r": 255, "g": 0, "b": 0}, "colorTemInKelvin": 0}),
+    ]
+    assert fake.calls == []  # nothing went to the cloud
+
+    # Ring segments still go through the cloud.
+    await hass.services.async_call("light", "turn_off", {"entity_id": "light.ceiling_light_ring"}, blocking=True)
+    assert fake.calls[-1][1] == "segmentedBrightness"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert lan.stopped

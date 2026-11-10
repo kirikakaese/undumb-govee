@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import voluptuous as vol
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
@@ -16,13 +17,25 @@ from homeassistant.components.light import (
 )
 from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import UndumbConfigEntry
-from .const import ATTR_LAMP_ID, ATTR_ROLE, ATTR_SEGMENTS, ATTR_ZONE_NAME, DOMAIN, MANUFACTURER
+from .const import (
+    ATTR_CONNECTION,
+    ATTR_LAMP_ID,
+    ATTR_LAYOUT,
+    ATTR_ROLE,
+    ATTR_SEGMENTS,
+    ATTR_ZONE_NAME,
+    DOMAIN,
+    MANUFACTURER,
+)
 from .coordinator import Lamp, UndumbCoordinator
 from .zones import (
     CAP_COLOR,
@@ -39,9 +52,11 @@ from .zones import (
     INST_SEG_BRIGHTNESS,
     INST_SEG_RGB,
     KIND_SEGMENT,
+    LAYOUT_SPLIT,
     Zone,
     format_segments,
     int_to_rgb,
+    parse_segments,
     rgb_to_int,
     scale,
 )
@@ -49,6 +64,13 @@ from .zones import (
 _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 1
+
+SERVICE_SET_SEGMENTS = "set_segments"
+SET_SEGMENTS_SCHEMA = {
+    vol.Required("segments"): cv.string,
+    vol.Optional(ATTR_RGB_COLOR): vol.All(vol.ExactSequence((cv.byte,) * 3), vol.Coerce(tuple)),
+    vol.Optional("brightness_pct"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+}
 
 
 async def async_setup_entry(
@@ -66,6 +88,9 @@ async def async_setup_entry(
             else:
                 entities.append(GoveeToggleLight(coordinator, lamp, zone))
     async_add_entities(entities)
+
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(SERVICE_SET_SEGMENTS, SET_SEGMENTS_SCHEMA, "async_set_segments")
 
 
 class _Base(CoordinatorEntity[UndumbCoordinator], LightEntity):
@@ -94,6 +119,36 @@ class _Base(CoordinatorEntity[UndumbCoordinator], LightEntity):
         if self.lamp.profile.has_power:
             await self.coordinator.send(self.lamp, CAP_ON_OFF, INST_POWER, 1 if on else 0)
 
+    async def async_set_segments(
+        self, segments: str, rgb_color: tuple[int, int, int] | None = None, brightness_pct: int | None = None
+    ) -> None:
+        """Paint raw segments, to find out which part of the lamp they are."""
+        prof = self.lamp.profile
+        if not prof.has_segments:
+            raise ServiceValidationError(f"{prof.name} doesn't report any segments to Govee's API.")
+        try:
+            segs = parse_segments(segments, prof.segment_count)
+        except ValueError as err:
+            raise ServiceValidationError(
+                f"Use segment numbers from 0 to {prof.segment_count - 1}, like 0-3 or 5, 7."
+            ) from err
+        if not segs:
+            raise ServiceValidationError("Give at least one segment.")
+        if rgb_color is None and brightness_pct is None:
+            rgb_color = (255, 0, 0)
+        if not self.coordinator.is_powered(self.lamp.device_id):
+            await self._power(True)
+        if brightness_pct is not None and prof.segment_brightness:
+            lo, hi = prof.segment_brightness_range
+            value = 0 if brightness_pct == 0 else scale(brightness_pct, (1, 100), (max(1, lo), hi))
+            await self.coordinator.send(
+                self.lamp, CAP_SEGMENT, INST_SEG_BRIGHTNESS, {"segment": segs, "brightness": value}
+            )
+        if rgb_color is not None and prof.segment_rgb:
+            await self.coordinator.send(
+                self.lamp, CAP_SEGMENT, INST_SEG_RGB, {"segment": segs, "rgb": rgb_to_int(rgb_color)}
+            )
+
 
 class GoveeLampLight(_Base):
     """The whole lamp: power, global brightness, colour and scenes."""
@@ -121,7 +176,13 @@ class GoveeLampLight(_Base):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {ATTR_LAMP_ID: self.lamp.device_id, ATTR_ROLE: "lamp"}
+        return {
+            ATTR_LAMP_ID: self.lamp.device_id,
+            ATTR_ROLE: "lamp",
+            ATTR_LAYOUT: self.lamp.layout,
+            ATTR_CONNECTION: self.coordinator.connection(self.lamp.device_id),
+            "segment_count": self.lamp.profile.segment_count,
+        }
 
     @property
     def is_on(self) -> bool | None:
@@ -291,7 +352,8 @@ class GoveeSegmentLight(_Base, RestoreEntity):
         self._on = False
         await self._set_level(self.zone, 0, None if self.zone.supports_brightness else self._rgb)
         # Every zone dark: switch the lamp off so HA and Apple Home agree.
-        if not any(s._on for s in self._siblings()) and not any(
+        # Not for main+ring lamps, where the main light must stay on.
+        if self.lamp.layout == LAYOUT_SPLIT and not any(s._on for s in self._siblings()) and not any(
             self.coordinator.state(self.lamp.device_id).get(z.instance) == 1
             for z in self.lamp.zones
             if z.instance

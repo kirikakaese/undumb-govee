@@ -20,6 +20,9 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: UndumbC
         "lamps": {
             dev_id: {
                 "profile": asdict(lamp.profile),
+                "layout": lamp.layout,
+                "connection": coordinator.connection(dev_id),
+                "lan_listener": coordinator.lan is not None,
                 "zones": [asdict(z) for z in lamp.zones],
                 "scene_count": len(lamp.scenes),
                 "state": coordinator.state(dev_id),

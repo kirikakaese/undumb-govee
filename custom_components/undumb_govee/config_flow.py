@@ -24,20 +24,50 @@ from homeassistant.helpers.selector import (
 from .api import GoveeApiError, GoveeAuthError, GoveeClient
 from .const import (
     CONF_DEVICES,
+    CONF_LAN_HOSTS,
+    CONF_LAYOUTS,
     CONF_SCAN_INTERVAL,
+    CONF_USE_LAN,
     CONF_ZONES,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_ZONES,
     MIN_SCAN_INTERVAL,
 )
-from .zones import DeviceProfile, build_zones, default_segment_zones, is_light, parse_profile, parse_segments
+from .zones import (
+    LAYOUT_MAIN_RING,
+    LAYOUTS,
+    SKU_PRESETS,
+    DeviceProfile,
+    build_zones,
+    default_layout,
+    default_segment_zones,
+    is_light,
+    parse_profile,
+    parse_segments,
+)
 
 
 def _describe(prof: DeviceProfile) -> str:
-    extra = len(build_zones(prof, None))
-    lights = f"{extra} lights" if extra >= 2 else ("main + 1 extra light" if extra == 1 else "1 light")
-    return f"{prof.name} ({prof.sku}) · {lights}"
+    zones = build_zones(prof, None)
+    if default_layout(prof) == LAYOUT_MAIN_RING and zones:
+        lights = "main light + " + " + ".join(z.name.lower() for z in zones)
+    elif len(zones) >= 2:
+        lights = f"{len(zones)} lights"
+    elif len(zones) == 1:
+        lights = "main + 1 extra light"
+    else:
+        lights = "1 light"
+    preset = SKU_PRESETS.get(prof.sku.upper())
+    model = f"{prof.sku}, {preset.label}" if preset else prof.sku
+    return f"{prof.name} ({model}) · {lights}"
+
+
+def _lan_fields(opts: dict[str, Any]) -> dict[Any, Any]:
+    return {
+        vol.Optional(CONF_USE_LAN, default=opts.get(CONF_USE_LAN, True)): bool,
+        vol.Optional(CONF_LAN_HOSTS, description={"suggested_value": opts.get(CONF_LAN_HOSTS, "")}): str,
+    }
 
 
 async def _fetch(hass, api_key: str) -> list[DeviceProfile]:
@@ -69,6 +99,8 @@ class UndumbGoveeConfigFlow(ConfigFlow, domain=DOMAIN):
         self._api_key: str | None = None
         self._interval = DEFAULT_SCAN_INTERVAL
         self._profiles: list[DeviceProfile] = []
+        self._use_lan = True
+        self._lan_hosts = ""
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -88,6 +120,8 @@ class UndumbGoveeConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._abort_if_unique_id_configured()
                     self._api_key = key
                     self._interval = int(user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+                    self._use_lan = bool(user_input.get(CONF_USE_LAN, True))
+                    self._lan_hosts = (user_input.get(CONF_LAN_HOSTS) or "").strip()
                     return await self.async_step_devices()
 
         return self.async_show_form(
@@ -96,6 +130,7 @@ class UndumbGoveeConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_API_KEY): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
                     vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): _interval_selector(),
+                    **_lan_fields({}),
                 }
             ),
             errors=errors,
@@ -109,7 +144,10 @@ class UndumbGoveeConfigFlow(ConfigFlow, domain=DOMAIN):
                 options={
                     CONF_DEVICES: user_input.get(CONF_DEVICES, []),
                     CONF_SCAN_INTERVAL: self._interval,
+                    CONF_USE_LAN: self._use_lan,
+                    CONF_LAN_HOSTS: self._lan_hosts,
                     CONF_ZONES: {},
+                    CONF_LAYOUTS: {},
                 },
             )
         multi = [p.device_id for p in self._profiles if build_zones(p, None)]
@@ -180,6 +218,8 @@ class UndumbGoveeOptionsFlow(OptionsFlow):
                 **{
                     CONF_DEVICES: user_input.get(CONF_DEVICES, []),
                     CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
+                    CONF_USE_LAN: bool(user_input.get(CONF_USE_LAN, True)),
+                    CONF_LAN_HOSTS: (user_input.get(CONF_LAN_HOSTS) or "").strip(),
                 }
             )
         opts = self.config_entry.options
@@ -189,6 +229,7 @@ class UndumbGoveeOptionsFlow(OptionsFlow):
                 {
                     vol.Optional(CONF_DEVICES, default=opts.get(CONF_DEVICES, [])): _device_selector(self._profiles),
                     vol.Required(CONF_SCAN_INTERVAL, default=opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): _interval_selector(),
+                    **_lan_fields(opts),
                 }
             ),
         )
@@ -198,7 +239,7 @@ class UndumbGoveeOptionsFlow(OptionsFlow):
             await self._load()
         except GoveeApiError:
             return self.async_abort(reason="cannot_connect")
-        segmented = [p for p in self._profiles if p.has_segments and p.segment_count >= 2]
+        segmented = [p for p in self._profiles if p.has_segments]
         selected = set(self.config_entry.options.get(CONF_DEVICES) or [])
         if selected:
             segmented = [p for p in segmented if p.device_id in selected]
@@ -227,12 +268,16 @@ class UndumbGoveeOptionsFlow(OptionsFlow):
         assert self._device is not None
         prof = self._device
         all_zones: dict[str, Any] = dict(self.config_entry.options.get(CONF_ZONES) or {})
+        layouts: dict[str, str] = dict(self.config_entry.options.get(CONF_LAYOUTS) or {})
+        layout = layouts.get(prof.device_id) or default_layout(prof)
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            layout = user_input.get("layout", layout)
+            layouts[prof.device_id] = layout
             if user_input.get("reset"):
                 all_zones.pop(prof.device_id, None)
-                return self._save(**{CONF_ZONES: all_zones})
+                return self._save(**{CONF_ZONES: all_zones, CONF_LAYOUTS: layouts})
             zones, seen = [], set()
             for i in range(1, MAX_ZONES + 1):
                 name = (user_input.get(f"name_{i}") or "").strip()
@@ -256,10 +301,14 @@ class UndumbGoveeOptionsFlow(OptionsFlow):
                 errors["base"] = "no_zones"
             if not errors:
                 all_zones[prof.device_id] = zones
-                return self._save(**{CONF_ZONES: all_zones})
+                return self._save(**{CONF_ZONES: all_zones, CONF_LAYOUTS: layouts})
 
-        current = all_zones.get(prof.device_id) or default_segment_zones(prof)
-        schema: dict[Any, Any] = {}
+        current = all_zones.get(prof.device_id) or default_segment_zones(prof, layout)
+        schema: dict[Any, Any] = {
+            vol.Required("layout", default=layout): SelectSelector(
+                SelectSelectorConfig(options=list(LAYOUTS), translation_key="layout")
+            )
+        }
         for i in range(1, MAX_ZONES + 1):
             cur = current[i - 1] if i <= len(current) else {}
             schema[vol.Optional(f"name_{i}", description={"suggested_value": cur.get("name", "")})] = str
