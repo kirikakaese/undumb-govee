@@ -1,0 +1,21 @@
+set_segments:
+  target:
+    entity:
+      integration: undumb_govee
+      domain: light
+  fields:
+    segments:
+      required: true
+      example: "0-3"
+      selector:
+        text:
+    rgb_color:
+      example: "[255, 0, 0]"
+      selector:
+        color_rgb:
+    brightness_pct:
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
