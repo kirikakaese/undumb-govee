@@ -35,6 +35,7 @@ from .const import (
     MIN_SCAN_INTERVAL,
 )
 from .zones import (
+    LAYOUT_LAN_SECTIONS,
     LAYOUT_MAIN_RING,
     LAYOUTS,
     SKU_PRESETS,
@@ -239,7 +240,8 @@ class UndumbGoveeOptionsFlow(OptionsFlow):
             await self._load()
         except GoveeApiError:
             return self.async_abort(reason="cannot_connect")
-        segmented = [p for p in self._profiles if p.has_segments]
+        # Any lamp can use LAN sections; segment layouts need segments.
+        segmented = list(self._profiles)
         selected = set(self.config_entry.options.get(CONF_DEVICES) or [])
         if selected:
             segmented = [p for p in segmented if p.device_id in selected]
@@ -255,7 +257,12 @@ class UndumbGoveeOptionsFlow(OptionsFlow):
                     vol.Required("lamp"): SelectSelector(
                         SelectSelectorConfig(
                             options=[
-                                SelectOptionDict(value=p.device_id, label=f"{p.name} ({p.sku}, {p.segment_count} segments)")
+                                SelectOptionDict(
+                                    value=p.device_id,
+                                    label=f"{p.name} ({p.sku}, {p.segment_count} segments)"
+                                    if p.has_segments
+                                    else f"{p.name} ({p.sku})",
+                                )
                                 for p in segmented
                             ]
                         )
@@ -287,11 +294,20 @@ class UndumbGoveeOptionsFlow(OptionsFlow):
                 if not name or not spec:
                     errors[f"segments_{i}" if name else f"name_{i}"] = "incomplete"
                     continue
-                try:
-                    segs = parse_segments(spec, prof.segment_count)
-                except ValueError:
-                    errors[f"segments_{i}"] = "bad_segments"
-                    continue
+                if layout == LAYOUT_LAN_SECTIONS:
+                    if not spec.isdigit() or not 1 <= int(spec) <= 9:
+                        errors[f"segments_{i}"] = "bad_section"
+                        continue
+                    segs = [int(spec)]
+                elif not prof.has_segments:
+                    errors["base"] = "no_segments"
+                    break
+                else:
+                    try:
+                        segs = parse_segments(spec, prof.segment_count)
+                    except ValueError:
+                        errors[f"segments_{i}"] = "bad_segments"
+                        continue
                 if seen & set(segs):
                     errors[f"segments_{i}"] = "overlap"
                     continue

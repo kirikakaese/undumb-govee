@@ -19,3 +19,14 @@ set_segments:
           min: 0
           max: 100
           unit_of_measurement: "%"
+send_lan_frames:
+  target:
+    entity:
+      integration: undumb_govee
+      domain: light
+  fields:
+    frames:
+      required: true
+      example: '["33 30 02 00"]'
+      selector:
+        object:

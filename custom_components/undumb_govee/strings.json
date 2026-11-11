@@ -67,7 +67,7 @@
       },
       "zones": {
         "title": "Lights in {name}",
-        "description": "This lamp reports {count} segments, numbered 0 to {last}.\n\n**Main light + ring**: the lamp's own controls drive the main light, and the lights below are made of segments (usually the ring). Good for ceiling lights.\n**Split segments into lights**: every light is a run of segments. Good for floor lamps.\n\nGive each light a name and its segments, for example `0-9`. Leave a row empty to skip it. To switch layout and get its default rows, choose the layout and tick *Reset*. To check which segments are where, use the `undumb_govee.set_segments` action in Developer tools.",
+        "description": "This lamp reports {count} segments, numbered 0 to {last}.\n\n**Main light + ring**: the lamp's own controls drive the main light, and the lights below are made of segments (usually the ring).\n**LAN sections**: each light is a section number (1, 2, 3 …) switched with local LAN commands. Try this if the ring doesn't react to *Main light + ring*. Needs LAN Control. Put the section number in the segments field, for example Main = `1`, Ring = `2`.\n**Split segments into lights**: every light is a run of segments. Good for floor lamps.\n\nLeave a row empty to skip it. To switch layout and get its default rows, choose the layout and tick *Reset*.",
         "data": {
           "name_1": "Light 1 name",
           "segments_1": "Light 1 segments",
@@ -86,18 +86,21 @@
       "incomplete": "Give this light both a name and segments.",
       "bad_segments": "Use segment numbers within the lamp's range, like 0-9 or 3, 5, 7.",
       "overlap": "These segments are already used by another light.",
-      "no_zones": "Add at least one light."
+      "no_zones": "Add at least one light.",
+      "bad_section": "Use a single section number from 1 to 9.",
+      "no_segments": "This lamp reports no segments. Choose the LAN sections layout instead."
     },
     "abort": {
       "cannot_connect": "Couldn't reach Govee's servers. Try again in a moment.",
-      "no_segment_lamps": "None of your selected lamps has segments to map. Lamps whose second light is a separate switch are set up automatically."
+      "no_segment_lamps": "No lamps are selected. Add one under Lamps and refresh interval first."
     }
   },
   "selector": {
     "layout": {
       "options": {
         "main_ring": "Main light + ring",
-        "split": "Split segments into lights"
+        "split": "Split segments into lights",
+        "lan_sections": "LAN sections (ceiling lights, experimental)"
       }
     }
   },
@@ -117,6 +120,16 @@
         "brightness_pct": {
           "name": "Brightness",
           "description": "Segment brightness."
+        }
+      }
+    },
+    "send_lan_frames": {
+      "name": "Send LAN frames",
+      "description": "Send raw Govee command frames to a lamp over LAN. The checksum is added for you. For finding out which commands a lamp understands.",
+      "fields": {
+        "frames": {
+          "name": "Frames",
+          "description": "List of frames in hex, like [\"33 30 02 00\"]."
         }
       }
     }

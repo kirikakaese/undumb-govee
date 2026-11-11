@@ -29,6 +29,8 @@ INST_DIY = "diyScene"
 
 KIND_SEGMENT = "segment"
 KIND_TOGGLE = "toggle"
+KIND_SECTION = "section"
+INST_SNAPSHOT = "snapshot"
 
 # Toggle instances that are features rather than lights.
 NON_LIGHT_TOGGLES = {"gradientToggle", "oscillationToggle", "dreamViewToggle", "sceneStageToggle"}
@@ -38,9 +40,15 @@ NON_LIGHT_TOGGLES = {"gradientToggle", "oscillationToggle", "dreamViewToggle", "
 #   main_ring  - the lamp's own power/colour/colour-temp drive the main light,
 #                and the segments form a separate ring (e.g. ceiling lights
 #                with an RGBWW panel and an RGBIC edge).
+#   lan_sections - each light is a "section" switched and coloured with
+#                local LAN commands. For lamps whose lights the cloud API
+#                can't address separately (ceiling lights like the H60A4).
 LAYOUT_SPLIT = "split"
 LAYOUT_MAIN_RING = "main_ring"
-LAYOUTS = (LAYOUT_MAIN_RING, LAYOUT_SPLIT)
+LAYOUT_LAN_SECTIONS = "lan_sections"
+LAYOUTS = (LAYOUT_MAIN_RING, LAYOUT_LAN_SECTIONS, LAYOUT_SPLIT)
+
+DEFAULT_SECTIONS = [{"name": "Main", "segments": "1"}, {"name": "Ring", "segments": "2"}]
 
 
 @dataclass(frozen=True)
@@ -74,6 +82,7 @@ class Zone:
     instance: str | None = None
     supports_color: bool = False
     supports_brightness: bool = False
+    section: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {"name": self.name, "segments": format_segments(self.segments)}
@@ -97,6 +106,7 @@ class DeviceProfile:
     light_toggles: list[str] = field(default_factory=list)
     has_scenes: bool = False
     has_diy_scenes: bool = False
+    snapshots: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def has_segments(self) -> bool:
@@ -163,6 +173,12 @@ def parse_profile(device: dict[str, Any]) -> DeviceProfile:
             prof.has_scenes = True
         elif ctype == CAP_SCENE and inst == INST_DIY:
             prof.has_diy_scenes = True
+        elif ctype == CAP_SCENE and inst == INST_SNAPSHOT:
+            prof.snapshots = [
+                {"name": o["name"], "value": o["value"]}
+                for o in params.get("options") or []
+                if isinstance(o, dict) and "name" in o and "value" in o
+            ]
     return prof
 
 
@@ -227,6 +243,8 @@ def default_segment_zones(prof: DeviceProfile, layout: str | None = None) -> lis
     """Suggested segment mapping for a device, in options-flow format."""
     layout = layout or default_layout(prof)
     preset = SKU_PRESETS.get(prof.sku.upper())
+    if layout == LAYOUT_LAN_SECTIONS:
+        return [dict(z) for z in DEFAULT_SECTIONS]
     if not prof.has_segments:
         return []
     if layout == LAYOUT_MAIN_RING:
@@ -268,6 +286,31 @@ def build_zones(
     """Create Zone objects from the user's mapping (or the default one)."""
     zones: list[Zone] = []
     mapping = configured if configured else default_segment_zones(prof, layout)
+    if layout == LAYOUT_LAN_SECTIONS:
+        used_s: set[str] = set()
+        for entry in mapping:
+            name = str(entry.get("name") or "").strip()
+            try:
+                section = int(str(entry.get("segments", "")).strip())
+            except ValueError:
+                continue
+            if not name or not 1 <= section <= 9:
+                continue
+            key = _slug(name)
+            while key in used_s:
+                key += "_2"
+            used_s.add(key)
+            zones.append(
+                Zone(
+                    key=f"sec_{key}",
+                    name=name,
+                    kind=KIND_SECTION,
+                    section=section,
+                    supports_color=True,
+                    supports_brightness=True,
+                )
+            )
+        return zones
     if prof.has_segments:
         used: set[str] = set()
         for entry in mapping:

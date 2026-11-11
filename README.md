@@ -46,6 +46,11 @@ reads that to find the separate lights. There are two layouts:
   ring. Switching the ring off leaves the main light on. The whole-lamp entity
   doubles as the main light, so you get `light.ceiling_light` and
   `light.ceiling_light_ring`.
+- **LAN sections** (experimental, ceiling lights). Each light is a numbered
+  section, switched and coloured with local commands the Govee app uses. Govee's
+  cloud API doesn't let you control the main light and ring of some ceiling
+  lights separately, so try this layout if the ring doesn't react. It needs LAN
+  control.
 - **Split segments** (floor lamps, light bars). Every light is a run of segments.
 
 - **Segment lamps** (most RGBIC lamps) report a strip of numbered segments.
@@ -159,6 +164,37 @@ Lamps on LAN control only ask the cloud every tenth refresh, or every refresh if
 they have a light switch the LAN API doesn't report.
 
 ## Troubleshooting
+
+### The main light and ring don't change separately
+
+Govee's cloud API doesn't separate the main light and ring on some ceiling
+lights (H60A1 owners report the same). Work through these in order:
+
+1. **Try LAN sections.** Go to **Configure → Map a lamp's lights to segments**,
+   pick the lamp, choose **LAN sections**, tick **Reset** and save. You get
+   `light.<lamp>_main` (section 1) and `light.<lamp>_ring` (section 2). LAN
+   Control must be on, and the whole-lamp entity's `connection` attribute must
+   say `lan`.
+2. **If the wrong light reacts, or nothing does,** find the section numbers. In
+   **Developer tools → Actions**, switch single sections off and watch the lamp:
+
+   ```yaml
+   action: undumb_govee.send_lan_frames
+   target:
+     entity_id: light.ceiling_light
+   data:
+     frames: ["33 30 01 00"]   # section 1 off; "33 30 01 01" turns it back on
+   ```
+
+   Try `02`, `03` and so on in place of `01`. Then enter the numbers you found
+   as the lights' segments in the LAN sections layout.
+3. **Snapshots always work.** In the Govee app, set the lamp up the way you want
+   (for example ring only, or main light only) and save it as a snapshot. After
+   a reload, every snapshot appears in the whole-lamp entity's effect list as
+   "Snapshot: …". You can use them in automations, scripts and Apple Home
+   scenes.
+4. **Still stuck?** Download diagnostics from the device page and open an issue.
+   The file contains the lamp's raw capabilities, with the API key removed.
 
 - **No separate lights for my lamp.** The lamp doesn't report segments or a
   light toggle through Govee's API, so there's nothing for the integration to

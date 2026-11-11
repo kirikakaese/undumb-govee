@@ -85,3 +85,44 @@ async def test_listener_scan_and_status() -> None:
     assert lan.command("192.0.2.5", "powerSwitch", 0)
     assert json.loads(transport.sent[-1][0])["msg"]["cmd"] == "turn"
     assert not lan.command("192.0.2.5", "segmentedBrightness", {})
+
+
+def test_build_frame_checksum() -> None:
+    from custom_components.undumb_govee.lan import build_frame
+
+    frame = build_frame([0x33, 0x01, 0x01])
+    assert len(frame) == 20
+    assert frame[:3] == bytes([0x33, 0x01, 0x01])
+    assert frame[19] == 0x33 ^ 0x01 ^ 0x01
+
+
+def test_section_frames() -> None:
+    from custom_components.undumb_govee.lan import (
+        parse_hex_frame,
+        ptreal_message,
+        section_brightness,
+        section_color,
+        section_power,
+    )
+
+    assert section_power(2, False)[:4] == bytes([0x33, 0x30, 0x02, 0x00])
+    assert section_brightness(1, 150)[:6] == bytes([0x33, 0x05, 0x2C, 0x01, 0x02, 100])
+    assert section_color(2, (1, 2, 3))[:10] == bytes([0x33, 0x05, 0x2C, 0x02, 0x01, 1, 2, 3, 0, 0])
+    assert section_color(1, None, 3000)[5:10] == bytes([0xFF, 0xFF, 0xFF, 0x0B, 0xB8])
+    assert parse_hex_frame("33 30 02 00") == section_power(2, False)
+
+    msg = json.loads(ptreal_message([section_power(1, True)]))
+    assert msg["msg"]["cmd"] == "ptReal"
+    import base64
+
+    assert base64.b64decode(msg["msg"]["data"]["command"][0]) == section_power(1, True)
+
+
+def test_parse_hex_frame_rejects_bad_input() -> None:
+    import pytest
+
+    from custom_components.undumb_govee.lan import parse_hex_frame
+
+    for bad in ("", "3", "zz", "00" * 20):
+        with pytest.raises(ValueError):
+            parse_hex_frame(bad)
