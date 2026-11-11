@@ -15,7 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import GoveeApiError, GoveeAuthError, GoveeClient, GoveeRateLimitError
 from .const import CLOUD_EVERY_WITH_LAN, DOMAIN, LAN_RESCAN_EVERY
 from .lan import LAN_INSTANCES, GoveeLan
-from .zones import KIND_TOGGLE, LAYOUT_SPLIT, DeviceProfile, Zone, state_map
+from .zones import KIND_TOGGLE, LAYOUT_LAN_SECTIONS, LAYOUT_SPLIT, DeviceProfile, Zone, state_map
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -81,6 +81,7 @@ class UndumbCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self._holds: dict[str, dict[str, tuple[Any, float]]] = {}
         self._cycle = 0
         self._via_lan: set[str] = set()
+        self.interfaces: list[str] = []
 
     # -- connection helpers -------------------------------------------------
 
@@ -100,8 +101,13 @@ class UndumbCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         cycle = self._cycle
         self._cycle += 1
 
-        if self.lan is not None and cycle and cycle % LAN_RESCAN_EVERY == 0:
-            await self.lan.scan(self.lan_hosts, wait=1.0)
+        if self.lan is not None and cycle:
+            missing = [d for d in self.lamps if self.lan_ip(d) is None]
+            # Keep looking for lamps that weren't found; otherwise rescan now
+            # and then in case a lamp got a new IP address.
+            if missing or cycle % LAN_RESCAN_EVERY == 0:
+                await self.lan.scan(self.lan_hosts, wait=1.0, interfaces=self.interfaces)
+            self._update_lan_issues()
 
         errors = 0
         for dev_id, lamp in self.lamps.items():
@@ -139,6 +145,26 @@ class UndumbCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         if errors and errors == len(self.lamps):
             raise UpdateFailed("Could not reach any Govee device")
         return data
+
+    def _update_lan_issues(self) -> None:
+        """Show a repair when a lamp that needs LAN can't be found."""
+        from homeassistant.helpers import issue_registry as ir
+
+        for dev_id, lamp in self.lamps.items():
+            issue_id = f"lan_not_found_{dev_id.replace(':', '').lower()}"
+            needs_lan = lamp.layout == LAYOUT_LAN_SECTIONS
+            if needs_lan and self.lan_ip(dev_id) is None:
+                ir.async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    issue_id,
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key="lan_not_found",
+                    translation_placeholders={"name": lamp.profile.name},
+                )
+            else:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     def _apply_holds(self, dev_id: str, fresh: dict[str, Any]) -> dict[str, Any]:
         holds = self._holds.get(dev_id, {})

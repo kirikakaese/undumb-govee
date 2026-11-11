@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -95,6 +96,19 @@ async def async_setup_entry(
                 entities.append(GoveeSectionLight(coordinator, lamp, zone))
             else:
                 entities.append(GoveeToggleLight(coordinator, lamp, zone))
+    # Remove lights a previous layout created that no longer exist, so they
+    # don't linger as "not provided" duplicates.
+    current = {e.unique_id for e in entities}
+    registry = er.async_get(hass)
+    for reg in er.async_entries_for_config_entry(registry, entry.entry_id):
+        # Only for lamps loaded right now, so a lamp missing from Govee's
+        # device list for a moment doesn't lose its lights.
+        if (
+            reg.domain == "light"
+            and reg.unique_id not in current
+            and any(reg.unique_id.startswith(f"{dev_id}_") for dev_id in coordinator.lamps)
+        ):
+            registry.async_remove(reg.entity_id)
     async_add_entities(entities)
 
     platform = entity_platform.async_get_current_platform()
