@@ -133,5 +133,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "lan_not_found": {
+      "title": "{name} not found on your network",
+      "description": "The LAN sections layout controls {name} over your local network, but the lamp didn't answer. Its lights stay unavailable until it's found.\n\n1. In the Govee app, open the lamp's settings and check that **LAN Control** is on.\n2. Make sure Home Assistant and the lamp are on the same network (no guest Wi-Fi, no VLAN in between). In Docker, Home Assistant needs host networking.\n3. Remove the built-in **Govee lights local** integration if it's set up. Only one integration can receive Govee LAN replies.\n4. Give the lamp a fixed IP address in your router and enter it under **Undumb Govee → Configure → Lamps and refresh interval → Lamp IP addresses**.\n\nThis message disappears by itself once the lamp is found."
+    }
   }
 }

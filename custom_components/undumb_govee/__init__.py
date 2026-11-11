@@ -52,6 +52,24 @@ async def _register_card(hass: HomeAssistant) -> None:
         _LOGGER.warning("Could not register the Undumb Govee card", exc_info=True)
 
 
+async def _interface_ips(hass: HomeAssistant) -> list[str]:
+    """IPv4 addresses of every network interface, for the multicast scan."""
+    try:
+        from homeassistant.components import network
+
+        adapters = await network.async_get_adapters(hass)
+    except Exception:  # noqa: BLE001 - fall back to the default interface
+        _LOGGER.debug("Couldn't list network adapters", exc_info=True)
+        return []
+    ips: list[str] = []
+    for adapter in adapters:
+        for info in adapter.get("ipv4") or []:
+            addr = info.get("address")
+            if addr and not addr.startswith("127.") and addr not in ips:
+                ips.append(addr)
+    return ips
+
+
 def parse_hosts(text: str | None) -> list[str]:
     return [h.strip() for h in (text or "").replace(";", ",").split(",") if h.strip()]
 
@@ -136,12 +154,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: UndumbConfigEntry) -> bo
     if entry.options.get(CONF_USE_LAN, True) and lamps:
         lan = await _acquire_lan(hass)
         if lan is not None:
-            await lan.scan(hosts)
+            interfaces = await _interface_ips(hass)
+            await lan.scan(hosts, interfaces=interfaces)
             found = [lamp.profile.name for dev_id, lamp in lamps.items() if lan.find(dev_id)]
             _LOGGER.debug("LAN control for: %s", found or "no lamps")
 
     interval = int(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
     coordinator = UndumbCoordinator(hass, entry, client, lamps, interval, lan, hosts)
+    if lan is not None:
+        coordinator.interfaces = interfaces
     try:
         await coordinator.async_config_entry_first_refresh()
     except Exception:

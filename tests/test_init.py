@@ -74,7 +74,8 @@ class FakeLan:
     def stop(self) -> None:
         self.stopped = True
 
-    async def scan(self, hosts=None, wait: float = 2.0):
+    async def scan(self, hosts=None, wait: float = 2.0, interfaces=None):
+        self.scans = getattr(self, "scans", 0) + 1
         return {}
 
     def find(self, device_id: str) -> LanDevice | None:
@@ -407,3 +408,52 @@ async def test_snapshots_are_effects(hass: HomeAssistant, fake: FakeClient) -> N
         "light", "turn_on", {"entity_id": "light.ceiling_light", "effect": "Snapshot: Ring only"}, blocking=True
     )
     assert fake.calls[-1] == (CEILING_LIGHT["device"], "snapshot", 4242)
+
+
+async def test_stale_lights_removed_after_layout_change(hass: HomeAssistant, fake: FakeClient) -> None:
+    from homeassistant.helpers import entity_registry as er
+
+    entry = await _setup(hass, {CONF_DEVICES: [CEILING_LIGHT["device"]], CONF_SCAN_INTERVAL: 60, CONF_ZONES: {}})
+    registry = er.async_get(hass)
+    assert registry.async_get("light.ceiling_light_ring") is not None  # segment ring
+
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "layouts": {CEILING_LIGHT["device"]: "lan_sections"}}
+    )
+    await hass.async_block_till_done()
+    ids = sorted(e.entity_id for e in er.async_entries_for_config_entry(registry, entry.entry_id))
+    # The old segment ring is gone and the section ring took its entity ID.
+    assert ids == ["light.ceiling_light", "light.ceiling_light_main", "light.ceiling_light_ring"]
+    unique_ids = {e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+    assert f"{CEILING_LIGHT['device']}_seg_ring" not in unique_ids
+
+
+async def test_repair_issue_when_lamp_not_on_lan(hass: HomeAssistant, fake: FakeClient) -> None:
+    from datetime import timedelta
+
+    from homeassistant.helpers import issue_registry as ir
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    await _setup(
+        hass,
+        {
+            CONF_DEVICES: [CEILING_LIGHT["device"]],
+            CONF_SCAN_INTERVAL: 60,
+            CONF_ZONES: {},
+            "layouts": {CEILING_LIGHT["device"]: "lan_sections"},
+        },
+    )
+    lan = FakeLan.instance
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+    await hass.async_block_till_done()
+    issue_id = "lan_not_found_" + CEILING_LIGHT["device"].replace(":", "").lower()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+    assert lan.scans >= 2  # kept looking for the missing lamp
+
+    # The lamp shows up: the issue goes away and the lights become available.
+    lan.lamps[CEILING_LIGHT["device"]] = {"onOff": 1, "brightness": 50}
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=122))
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    assert hass.states.get("light.ceiling_light_main").state != "unavailable"

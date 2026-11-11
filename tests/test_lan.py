@@ -126,3 +126,37 @@ def test_parse_hex_frame_rejects_bad_input() -> None:
     for bad in ("", "3", "zz", "00" * 20):
         with pytest.raises(ValueError):
             parse_hex_frame(bad)
+
+
+def test_find_matches_mac_suffix() -> None:
+    lan = GoveeLan()
+    lan._on_message(command_message("scan", {"ip": "192.0.2.7", "device": "98:17:3C:00:11:22", "sku": "H60A4"}), "192.0.2.7")
+    assert lan.find("AB:CD:98:17:3C:00:11:22").ip == "192.0.2.7"
+    assert lan.find("AB:CD:98:17:3C:00:11:23") is None
+    assert lan.find("12:34") is None
+
+
+async def test_scan_goes_out_on_every_interface() -> None:
+    class _Sock:
+        def __init__(self) -> None:
+            self.ifaces: list[bytes] = []
+
+        def setsockopt(self, level, opt, value) -> None:
+            self.ifaces.append(value)
+
+    sock = _Sock()
+
+    class _T(_Transport):
+        def get_extra_info(self, name):
+            return sock if name == "socket" else None
+
+    lan = GoveeLan()
+    transport = _T()
+    lan._transport = transport  # type: ignore[assignment]
+    await lan.scan(["192.0.2.50"], wait=0, interfaces=["192.168.1.10", "172.30.32.1"])
+    import socket as s
+
+    assert sock.ifaces == [s.inet_aton("192.168.1.10"), s.inet_aton("172.30.32.1")]
+    assert [addr for _, addr in transport.sent] == [
+        ("239.255.255.250", 4001), ("239.255.255.250", 4001), ("192.0.2.50", 4001)
+    ]

@@ -198,20 +198,56 @@ class GoveeLan:
                 if not fut.done():
                     fut.set_result(data)
 
-    async def scan(self, extra_hosts: list[str] | None = None, wait: float = 2.0) -> dict[str, LanDevice]:
-        """Ask every lamp on the network (and any given IPs) to identify itself."""
+    def _set_multicast_if(self, interface_ip: str) -> None:
+        sock = self._transport.get_extra_info("socket") if self._transport else None
+        if sock is not None:
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface_ip))
+
+    async def scan(
+        self,
+        extra_hosts: list[str] | None = None,
+        wait: float = 2.0,
+        interfaces: list[str] | None = None,
+    ) -> dict[str, LanDevice]:
+        """Ask every lamp on the network (and any given IPs) to identify itself.
+
+        The multicast scan goes out once per network interface. On machines
+        with several interfaces (Home Assistant OS has Docker bridges), the
+        default one is often not the home network.
+        """
         msg = scan_message()
-        targets = [MULTICAST_GROUP, *(extra_hosts or [])]
-        for target in targets:
+        for iface in interfaces or [None]:
             try:
-                self._send(msg, target, SCAN_PORT)
+                if iface:
+                    self._set_multicast_if(iface)
+                self._send(msg, MULTICAST_GROUP, SCAN_PORT)
             except OSError as err:
-                _LOGGER.debug("LAN scan to %s failed: %s", target, err)
+                _LOGGER.debug("LAN scan via %s failed: %s", iface or "default interface", err)
+        for host in extra_hosts or []:
+            try:
+                self._send(msg, host, SCAN_PORT)
+            except OSError as err:
+                _LOGGER.debug("LAN scan to %s failed: %s", host, err)
         await asyncio.sleep(wait)
         return self.devices
 
     def find(self, device_id: str) -> LanDevice | None:
-        return self.devices.get(normalise_id(device_id))
+        """Find a lamp by its cloud device ID.
+
+        The LAN API and the cloud don't always use the same ID length (some
+        lamps report only the 6-byte MAC on one side), so fall back to
+        matching the MAC at the end.
+        """
+        key = normalise_id(device_id)
+        if key in self.devices:
+            return self.devices[key]
+        if len(key) < 12:
+            return None
+        mac = key[-12:]
+        for dev_key, dev in self.devices.items():
+            if dev_key[-12:] == mac:
+                return dev
+        return None
 
     async def status(self, ip: str, timeout: float = 2.0) -> dict[str, Any] | None:
         """Return cloud-style state from a lamp, or None if it didn't answer."""

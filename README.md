@@ -92,6 +92,10 @@ whole-lamp entity's `connection` attribute shows `lan` or `cloud`.
 Ring segments always use the cloud API, because Govee's LAN API has no
 documented segment command.
 
+Undumb Govee looks for lamps on every network interface and keeps looking
+until it finds them. If a lamp that needs LAN can't be found, Home Assistant
+shows a warning under **Settings → Repairs**.
+
 If the lamp isn't found, check these:
 - Home Assistant must be on the same network. In Docker, use host networking.
   Otherwise enter the lamp's IP address under **Configure → Lamps and refresh
