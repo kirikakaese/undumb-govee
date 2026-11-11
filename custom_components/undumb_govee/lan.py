@@ -12,6 +12,7 @@ No Home Assistant imports, so it can be tested on its own.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -43,6 +44,48 @@ def scan_message() -> bytes:
 
 def command_message(cmd: str, data: dict[str, Any]) -> bytes:
     return json.dumps({"msg": {"cmd": cmd, "data": data}}).encode()
+
+
+def build_frame(data: bytes | list[int]) -> bytes:
+    """Pad a Govee command to 19 bytes and append the XOR checksum (20 bytes)."""
+    raw = bytes(data)
+    if len(raw) > 19:
+        raise ValueError("Govee frames hold at most 19 data bytes")
+    raw = raw.ljust(19, b"\x00")
+    checksum = 0
+    for byte in raw:
+        checksum ^= byte
+    return raw + bytes([checksum])
+
+
+def parse_hex_frame(text: str) -> bytes:
+    """Turn "33 30 01 00" (or "333001") into a checksummed frame."""
+    cleaned = text.replace(" ", "").replace(":", "").replace(",", "")
+    if not cleaned or len(cleaned) % 2:
+        raise ValueError("Use pairs of hex digits, like 33 30 01 00")
+    return build_frame(bytes.fromhex(cleaned))
+
+
+def ptreal_message(frames: list[bytes]) -> bytes:
+    return command_message(
+        "ptReal", {"command": [base64.b64encode(f).decode() for f in frames]}
+    )
+
+
+# Section commands, as used by Govee lamps with separately switchable lights
+# (reverse-engineered from the Govee app; see README). <sec> is 1-based.
+def section_power(section: int, on: bool) -> bytes:
+    return build_frame([0x33, 0x30, section, 0x01 if on else 0x00])
+
+
+def section_brightness(section: int, pct: int) -> bytes:
+    return build_frame([0x33, 0x05, 0x2C, section, 0x02, max(1, min(100, int(pct)))])
+
+
+def section_color(section: int, rgb: tuple[int, int, int] | None, kelvin: int = 0) -> bytes:
+    r, g, b = rgb if rgb is not None else (0xFF, 0xFF, 0xFF)
+    k = max(0, min(0xFFFF, int(kelvin)))
+    return build_frame([0x33, 0x05, 0x2C, section, 0x01, r, g, b, k >> 8, k & 0xFF])
 
 
 def to_lan_command(instance: str, value: Any) -> tuple[str, dict[str, Any]] | None:
@@ -183,6 +226,16 @@ class GoveeLan:
                 waiters.remove(fut)
             return None
         return status_to_state(data)
+
+    def ptreal(self, ip: str, frames: list[bytes]) -> bool:
+        """Send raw Govee frames (at most 12 per message)."""
+        try:
+            for start in range(0, len(frames), 12):
+                self._send(ptreal_message(frames[start : start + 12]), ip, COMMAND_PORT)
+        except OSError as err:
+            _LOGGER.debug("ptReal to %s failed: %s", ip, err)
+            return False
+        return True
 
     def command(self, ip: str, instance: str, value: Any) -> bool:
         """Send a cloud-style command over LAN. Returns False if not possible."""

@@ -37,6 +37,7 @@ from .const import (
     MANUFACTURER,
 )
 from .coordinator import Lamp, UndumbCoordinator
+from .lan import parse_hex_frame, section_brightness, section_color, section_power
 from .zones import (
     CAP_COLOR,
     CAP_ON_OFF,
@@ -51,6 +52,8 @@ from .zones import (
     INST_SCENE,
     INST_SEG_BRIGHTNESS,
     INST_SEG_RGB,
+    INST_SNAPSHOT,
+    KIND_SECTION,
     KIND_SEGMENT,
     LAYOUT_SPLIT,
     Zone,
@@ -64,6 +67,9 @@ from .zones import (
 _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 1
+
+SERVICE_SEND_LAN = "send_lan_frames"
+SEND_LAN_SCHEMA = {vol.Required("frames"): vol.All(cv.ensure_list, [cv.string])}
 
 SERVICE_SET_SEGMENTS = "set_segments"
 SET_SEGMENTS_SCHEMA = {
@@ -85,12 +91,15 @@ async def async_setup_entry(
         for zone in lamp.zones:
             if zone.kind == KIND_SEGMENT:
                 entities.append(GoveeSegmentLight(coordinator, lamp, zone))
+            elif zone.kind == KIND_SECTION:
+                entities.append(GoveeSectionLight(coordinator, lamp, zone))
             else:
                 entities.append(GoveeToggleLight(coordinator, lamp, zone))
     async_add_entities(entities)
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(SERVICE_SET_SEGMENTS, SET_SEGMENTS_SCHEMA, "async_set_segments")
+    platform.async_register_entity_service(SERVICE_SEND_LAN, SEND_LAN_SCHEMA, "async_send_lan_frames")
 
 
 class _Base(CoordinatorEntity[UndumbCoordinator], LightEntity):
@@ -118,6 +127,14 @@ class _Base(CoordinatorEntity[UndumbCoordinator], LightEntity):
     async def _power(self, on: bool) -> None:
         if self.lamp.profile.has_power:
             await self.coordinator.send(self.lamp, CAP_ON_OFF, INST_POWER, 1 if on else 0)
+
+    async def async_send_lan_frames(self, frames: list[str]) -> None:
+        """Send raw Govee frames over LAN (for finding out what a lamp understands)."""
+        try:
+            parsed = [parse_hex_frame(f) for f in frames]
+        except ValueError as err:
+            raise ServiceValidationError(f"Bad frame: {err}") from err
+        self.coordinator.send_frames(self.lamp, parsed)
 
     async def async_set_segments(
         self, segments: str, rgb_color: tuple[int, int, int] | None = None, brightness_pct: int | None = None
@@ -169,9 +186,10 @@ class GoveeLampLight(_Base):
             modes.add(ColorMode.BRIGHTNESS if prof.brightness_range else ColorMode.ONOFF)
         self._attr_supported_color_modes = modes
         self._scene_by_name = {s["name"]: s["value"] for s in lamp.scenes}
-        if self._scene_by_name:
+        self._snapshot_by_name = {f"Snapshot: {s['name']}": s["value"] for s in prof.snapshots}
+        if self._scene_by_name or self._snapshot_by_name:
             self._attr_supported_features = LightEntityFeature.EFFECT
-            self._attr_effect_list = list(self._scene_by_name)
+            self._attr_effect_list = [*self._snapshot_by_name, *self._scene_by_name]
         self._effect: str | None = None
 
     @property
@@ -238,7 +256,11 @@ class GoveeLampLight(_Base):
         elif ATTR_COLOR_TEMP_KELVIN in kwargs:
             self._effect = None
             await self.coordinator.send(self.lamp, CAP_COLOR, INST_CT, int(kwargs[ATTR_COLOR_TEMP_KELVIN]))
-        if (name := kwargs.get(ATTR_EFFECT)) and name in self._scene_by_name:
+        if (name := kwargs.get(ATTR_EFFECT)) and name in self._snapshot_by_name:
+            await self.coordinator.send(self.lamp, CAP_SCENE, INST_SNAPSHOT, self._snapshot_by_name[name])
+            self._effect = name
+            self.async_write_ha_state()
+        elif name and name in self._scene_by_name:
             await self.coordinator.send(self.lamp, CAP_SCENE, INST_SCENE, self._scene_by_name[name])
             self._effect = name
             self.async_write_ha_state()
@@ -390,3 +412,113 @@ class GoveeToggleLight(_Base):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.send(self.lamp, CAP_TOGGLE, self.zone.instance or "", 0)
+
+
+class GoveeSectionLight(_Base, RestoreEntity):
+    """One light of a lamp that is switched and coloured with LAN section commands.
+
+    The lamp doesn't report section state back, so state is tracked here.
+    """
+
+    _attr_min_color_temp_kelvin = 2700
+    _attr_max_color_temp_kelvin = 6500
+    _attr_supported_color_modes = {ColorMode.RGB, ColorMode.COLOR_TEMP}
+
+    def __init__(self, coordinator: UndumbCoordinator, lamp: Lamp, zone: Zone) -> None:
+        super().__init__(coordinator, lamp)
+        self.zone = zone
+        self._attr_name = zone.name
+        self._attr_unique_id = f"{lamp.device_id}_{zone.key}"
+        self._on = True
+        self._bri = 255
+        self._rgb: tuple[int, int, int] = (255, 255, 255)
+        self._kelvin: int | None = 4000
+        self._mode = ColorMode.COLOR_TEMP
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.lamp.zone_entities[self.zone.key] = self
+        if (last := await self.async_get_last_state()) is not None:
+            self._on = last.state == STATE_ON
+            attrs = last.attributes
+            if (bri := attrs.get(ATTR_BRIGHTNESS)) is not None:
+                self._bri = int(bri)
+            if attrs.get("color_mode") == ColorMode.RGB and attrs.get(ATTR_RGB_COLOR):
+                self._rgb = tuple(attrs[ATTR_RGB_COLOR])  # type: ignore[assignment]
+                self._mode = ColorMode.RGB
+            elif attrs.get(ATTR_COLOR_TEMP_KELVIN):
+                self._kelvin = int(attrs[ATTR_COLOR_TEMP_KELVIN])
+                self._mode = ColorMode.COLOR_TEMP
+
+    async def async_will_remove_from_hass(self) -> None:
+        self.lamp.zone_entities.pop(self.zone.key, None)
+        await super().async_will_remove_from_hass()
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.lan_ip(self.lamp.device_id) is not None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            ATTR_LAMP_ID: self.lamp.device_id,
+            ATTR_ROLE: "zone",
+            ATTR_ZONE_NAME: self.zone.name,
+            "section": self.zone.section,
+        }
+
+    @property
+    def is_on(self) -> bool:
+        return self._on and self.coordinator.is_powered(self.lamp.device_id)
+
+    @property
+    def brightness(self) -> int:
+        return self._bri
+
+    @property
+    def color_mode(self) -> ColorMode:
+        return self._mode
+
+    @property
+    def rgb_color(self) -> tuple[int, int, int] | None:
+        return self._rgb if self._mode == ColorMode.RGB else None
+
+    @property
+    def color_temp_kelvin(self) -> int | None:
+        return self._kelvin if self._mode == ColorMode.COLOR_TEMP else None
+
+    def _siblings(self) -> list[GoveeSectionLight]:
+        return [
+            e for k, e in self.lamp.zone_entities.items()
+            if k != self.zone.key and isinstance(e, GoveeSectionLight)
+        ]
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        sec = self.zone.section
+        frames: list[bytes] = []
+        if not self.coordinator.is_powered(self.lamp.device_id):
+            await self._power(True)
+            # Lighting one section of a dark lamp shouldn't wake the others.
+            frames += [section_power(s.zone.section, False) for s in self._siblings() if not s._on]
+        frames.append(section_power(sec, True))
+        if ATTR_BRIGHTNESS in kwargs:
+            self._bri = max(1, int(kwargs[ATTR_BRIGHTNESS]))
+            frames.append(section_brightness(sec, scale(self._bri, (1, 255), (1, 100))))
+        if ATTR_RGB_COLOR in kwargs:
+            self._rgb = tuple(kwargs[ATTR_RGB_COLOR])  # type: ignore[assignment]
+            self._mode = ColorMode.RGB
+            frames.append(section_color(sec, self._rgb, 0))
+        elif ATTR_COLOR_TEMP_KELVIN in kwargs:
+            self._kelvin = int(kwargs[ATTR_COLOR_TEMP_KELVIN])
+            self._mode = ColorMode.COLOR_TEMP
+            frames.append(section_color(sec, None, self._kelvin))
+        self.coordinator.send_frames(self.lamp, frames)
+        self._on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self.coordinator.send_frames(self.lamp, [section_power(self.zone.section, False)])
+        self._on = False
+        if not any(s._on for s in self._siblings()):
+            await self._power(False)
+        self.async_write_ha_state()

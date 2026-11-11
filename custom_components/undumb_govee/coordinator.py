@@ -35,6 +35,7 @@ class Lamp:
     zones: list[Zone]
     layout: str = LAYOUT_SPLIT
     scenes: list[dict[str, Any]] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
     # Zone entities register here so they can coordinate with each other.
     zone_entities: dict[str, Any] = field(default_factory=dict)
 
@@ -163,6 +164,17 @@ class UndumbCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         return self.state(dev_id).get("powerSwitch", 1) == 1
 
     # -- commands -----------------------------------------------------------
+
+    def send_frames(self, lamp: Lamp, frames: list[bytes]) -> None:
+        """Send raw LAN frames (ptReal) to a lamp."""
+        ip = self.lan_ip(lamp.device_id)
+        if ip is None or self.lan is None:
+            raise HomeAssistantError(
+                f"{lamp.profile.name} isn't reachable over LAN. Turn on LAN Control in the Govee app "
+                "and check that Home Assistant can see the lamp (see the README)."
+            )
+        if not self.lan.ptreal(ip, frames):
+            raise HomeAssistantError(f"Couldn't send the LAN command to {lamp.profile.name}.")
 
     async def send(self, lamp: Lamp, cap_type: str, instance: str, value: Any) -> None:
         """Send a command (LAN when possible) and update state optimistically."""

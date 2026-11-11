@@ -112,6 +112,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: UndumbConfigEntry) -> bo
             profile=prof,
             zones=build_zones(prof, zone_config.get(prof.device_id), layout),
             layout=layout,
+            raw=dev,
         )
         if prof.has_scenes:
             try:
